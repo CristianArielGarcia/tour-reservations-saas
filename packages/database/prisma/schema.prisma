@@ -1,0 +1,466 @@
+// Tour Reservations SaaS — Prisma Schema
+// Source of truth: 02_data_model_schema.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ──────────────────────────────────────────────────────────────────
+
+enum CurrencyCode {
+  USD
+  ARS
+}
+
+enum ReservationStatus {
+  DRAFT
+  RESERVED
+  PARTIALLY_PAID
+  PAID
+  CONFIRMED
+  CANCELLED
+}
+
+enum TourItemKind {
+  BASE
+  FEE
+  ADDON
+}
+
+enum ChargeType {
+  PER_PERSON
+  PER_BOOKING
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  CARD
+  OTHER
+}
+
+enum DepartureStatus {
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  RECEIVED
+  VOID
+}
+
+enum AdjustmentType {
+  OVERRIDE_UNIT_PRICE
+  DISCOUNT_AMOUNT
+  DISCOUNT_PERCENT
+  SURCHARGE_AMOUNT
+}
+
+// ─── TENANCY & USERS ─────────────────────────────────────────────────────────
+
+model Agency {
+  id              String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name            String       @unique
+  defaultCurrency CurrencyCode @default(USD) @map("default_currency")
+  timezone        String       @default("America/Argentina/Ushuaia")
+  active          Boolean      @default(true)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  agencyUsers             AgencyUser[]
+  tours                   Tour[]
+  tourItems               TourItem[]
+  passengerCategories     PassengerCategory[]
+  priceBooks              PriceBook[]
+  tourItemPrices          TourItemPrice[]
+  tourItemCategoryRules   TourItemCategoryRule[]
+  departures              TourDeparture[]
+  customers               Customer[]
+  reservations            Reservation[]
+  auditLogs               AuditLog[]
+
+  @@map("agencies")
+}
+
+model Profile {
+  id        String   @id @db.Uuid  // must match auth.users.id
+  fullName  String?  @map("full_name")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  agencyUsers                 AgencyUser[]
+  reservationsCreated         Reservation[]              @relation("CreatedBy")
+  reservationsOverrideBy      Reservation[]              @relation("CapacityOverrideBy")
+  adjustmentsCreated          ReservationItemAdjustment[]
+  paymentsCreated             Payment[]
+  paymentRefundsCreated       PaymentRefund[]
+  auditLogsCreated            AuditLog[]
+
+  @@map("profiles")
+}
+
+model AgencyUser {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId  String   @map("agency_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  role      String   // OWNER | STAFF | STAFF_PRICING | VIEWER
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  agency  Agency  @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user    Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, userId])
+  @@index([agencyId])
+  @@index([userId])
+  @@map("agency_users")
+}
+
+// ─── TOURS & TOUR ITEMS ───────────────────────────────────────────────────────
+
+model Tour {
+  id              String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId        String   @map("agency_id") @db.Uuid
+  code            String?
+  name            String
+  description     String?
+  durationMinutes Int?     @map("duration_minutes")
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  agency     Agency       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  tourItems  TourItem[]
+  departures TourDeparture[]
+
+  @@unique([agencyId, code])
+  @@index([agencyId])
+  @@map("tours")
+}
+
+model TourItem {
+  id              String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId        String       @map("agency_id") @db.Uuid
+  tourId          String       @map("tour_id") @db.Uuid
+  code            String
+  name            String
+  kind            TourItemKind
+  chargeType      ChargeType   @map("charge_type")
+  isOptional      Boolean      @default(false) @map("is_optional")
+  defaultQuantity Int          @default(1) @map("default_quantity")
+  active          Boolean      @default(true)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  agency               Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  tour                 Tour                   @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  prices               TourItemPrice[]
+  categoryRules        TourItemCategoryRule[]
+  reservationItems     ReservationItem[]
+
+  @@unique([agencyId, tourId, code])
+  @@index([tourId])
+  @@index([agencyId])
+  @@map("tour_items")
+}
+
+// ─── PASSENGER CATEGORIES ────────────────────────────────────────────────────
+
+model PassengerCategory {
+  id                   String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId             String   @map("agency_id") @db.Uuid
+  code                 String
+  name                 String
+  minAgeYears          Int?     @map("min_age_years")
+  maxAgeYears          Int?     @map("max_age_years")
+  basePriceMultiplier  Decimal  @default(1.000) @map("base_price_multiplier") @db.Decimal(6, 3)
+  occupiesCapacity     Boolean  @default(true) @map("occupies_capacity")
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  agency        Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  categoryRules TourItemCategoryRule[]
+
+  @@unique([agencyId, code])
+  @@index([agencyId])
+  @@map("passenger_categories")
+}
+
+// ─── PRICING ─────────────────────────────────────────────────────────────────
+
+model PriceBook {
+  id        String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId  String       @map("agency_id") @db.Uuid
+  currency  CurrencyCode
+  name      String       @default("default")
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  agency Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  prices TourItemPrice[]
+
+  @@unique([agencyId, currency, name])
+  @@index([agencyId])
+  @@map("price_books")
+}
+
+model TourItemPrice {
+  id           String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId     String    @map("agency_id") @db.Uuid
+  tourItemId   String    @map("tour_item_id") @db.Uuid
+  priceBookId  String    @map("price_book_id") @db.Uuid
+  validFrom    DateTime  @map("valid_from") @db.Date
+  validTo      DateTime? @map("valid_to") @db.Date
+  unitPrice    Decimal   @map("unit_price") @db.Decimal(12, 2)
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  // valid_range is a GENERATED ALWAYS column — managed via raw SQL migration, not Prisma
+  // EXCLUDE constraint also managed via raw SQL migration
+
+  agency    Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  tourItem  TourItem  @relation(fields: [tourItemId], references: [id], onDelete: Restrict)
+  priceBook PriceBook @relation(fields: [priceBookId], references: [id], onDelete: Restrict)
+
+  @@index([tourItemId, priceBookId, validFrom(sort: Desc)])
+  @@index([agencyId])
+  @@map("tour_item_prices")
+}
+
+model TourItemCategoryRule {
+  id                 String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId           String   @map("agency_id") @db.Uuid
+  tourItemId         String   @map("tour_item_id") @db.Uuid
+  passengerCategoryId String  @map("passenger_category_id") @db.Uuid
+  multiplier         Decimal  @default(1.000) @db.Decimal(6, 3)
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  agency            Agency            @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  tourItem          TourItem          @relation(fields: [tourItemId], references: [id], onDelete: Cascade)
+  passengerCategory PassengerCategory @relation(fields: [passengerCategoryId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, tourItemId, passengerCategoryId])
+  @@index([tourItemId])
+  @@index([passengerCategoryId])
+  @@map("tour_item_category_rules")
+}
+
+// ─── DEPARTURES ───────────────────────────────────────────────────────────────
+
+model TourDeparture {
+  id            String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId      String          @map("agency_id") @db.Uuid
+  tourId        String          @map("tour_id") @db.Uuid
+  startAt       DateTime        @map("start_at") @db.Timestamptz
+  capacityTotal Int             @map("capacity_total")
+  status        DepartureStatus @default(ACTIVE)
+  notes         String?
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  agency       Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  tour         Tour          @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  reservations Reservation[]
+
+  @@index([agencyId, startAt])
+  @@index([tourId, startAt])
+  @@map("tour_departures")
+}
+
+// ─── CUSTOMERS ────────────────────────────────────────────────────────────────
+
+model Customer {
+  id             String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId       String   @map("agency_id") @db.Uuid
+  fullName       String   @map("full_name")
+  email          String?
+  phone          String?
+  lodgingAddress String?  @map("lodging_address")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  agency       Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  reservations Reservation[]
+
+  @@index([agencyId, email])
+  @@index([agencyId, phone])
+  @@map("customers")
+}
+
+// ─── RESERVATIONS ─────────────────────────────────────────────────────────────
+
+model Reservation {
+  id            String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId      String            @map("agency_id") @db.Uuid
+  departureId   String            @map("departure_id") @db.Uuid
+  customerId    String            @map("customer_id") @db.Uuid
+  status        ReservationStatus @default(RESERVED)
+  currency      CurrencyCode
+
+  // Snapshot totals
+  totalSnapshot Decimal @default(0) @map("total_snapshot") @db.Decimal(12, 2)
+  totalFinal    Decimal @default(0) @map("total_final") @db.Decimal(12, 2)
+
+  // Accounting caches (kept consistent by backend on every payment/refund/adjustment)
+  totalPaid      Decimal @default(0) @map("total_paid") @db.Decimal(12, 2)
+  totalRefunded  Decimal @default(0) @map("total_refunded") @db.Decimal(12, 2)
+  netPaid        Decimal @default(0) @map("net_paid") @db.Decimal(12, 2)
+  balanceDue     Decimal @default(0) @map("balance_due") @db.Decimal(12, 2)
+
+  notes String?
+
+  createdBy String   @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Overbooking metadata
+  capacityOverride       Boolean   @default(false) @map("capacity_override")
+  capacityOverrideReason String?   @map("capacity_override_reason")
+  capacityOverrideBy     String?   @map("capacity_override_by") @db.Uuid
+  capacityOverrideAt     DateTime? @map("capacity_override_at") @db.Timestamptz
+
+  agency     Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  departure  TourDeparture @relation(fields: [departureId], references: [id], onDelete: Restrict)
+  customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  creator    Profile       @relation("CreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  overrideBy Profile?      @relation("CapacityOverrideBy", fields: [capacityOverrideBy], references: [id], onDelete: SetNull)
+
+  passengers   ReservationPassenger[]
+  items        ReservationItem[]
+  payments     Payment[]
+
+  @@index([agencyId, status])
+  @@index([departureId])
+  @@index([createdAt(sort: Desc)])
+  @@map("reservations")
+}
+
+model ReservationPassenger {
+  id             String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  reservationId  String   @map("reservation_id") @db.Uuid
+  firstName      String   @map("first_name")
+  lastName       String   @map("last_name")
+  birthDate      DateTime? @map("birth_date") @db.Date
+  documentId     String   @map("document_id")
+  categoryCode   String   @map("category_code")
+  email          String?
+  phone          String?
+  lodgingAddress String?  @map("lodging_address")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@unique([reservationId, documentId])
+  @@index([reservationId])
+  @@map("reservation_passengers")
+}
+
+model ReservationItem {
+  id            String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  reservationId String       @map("reservation_id") @db.Uuid
+  tourItemId    String       @map("tour_item_id") @db.Uuid
+
+  // Snapshot fields — immutable after creation
+  nameSnapshot       String      @map("name_snapshot")
+  kindSnapshot       TourItemKind @map("kind_snapshot")
+  chargeTypeSnapshot ChargeType  @map("charge_type_snapshot")
+  isOptionalSnapshot Boolean     @map("is_optional_snapshot")
+
+  quantity            Int     @db.Integer
+  unitPriceSnapshot   Decimal @map("unit_price_snapshot") @db.Decimal(12, 2)
+  totalPriceSnapshot  Decimal @map("total_price_snapshot") @db.Decimal(12, 2)
+
+  pricingMeta Json     @default("{}") @map("pricing_meta")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  reservation  Reservation                 @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  tourItem     TourItem                    @relation(fields: [tourItemId], references: [id], onDelete: Restrict)
+  adjustments  ReservationItemAdjustment[]
+
+  @@index([reservationId])
+  @@map("reservation_items")
+}
+
+// ─── ADJUSTMENTS ─────────────────────────────────────────────────────────────
+
+model ReservationItemAdjustment {
+  id                String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  reservationItemId String         @map("reservation_item_id") @db.Uuid
+  type              AdjustmentType
+  amount            Decimal        @db.Decimal(12, 2)
+  reason            String
+  createdBy         String         @map("created_by") @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  reservationItem ReservationItem @relation(fields: [reservationItemId], references: [id], onDelete: Cascade)
+  creator         Profile         @relation(fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([reservationItemId])
+  @@map("reservation_item_adjustments")
+}
+
+// ─── PAYMENTS & REFUNDS ───────────────────────────────────────────────────────
+
+model Payment {
+  id            String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  reservationId String        @map("reservation_id") @db.Uuid
+  status        PaymentStatus @default(RECEIVED)
+  amount        Decimal       @db.Decimal(12, 2)
+  currency      CurrencyCode
+  method        PaymentMethod
+  reference     String?
+  receivedAt    DateTime      @default(now()) @map("received_at") @db.Timestamptz
+  createdBy     String        @map("created_by") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  reservation Reservation   @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  creator     Profile       @relation(fields: [createdBy], references: [id], onDelete: Restrict)
+  refunds     PaymentRefund[]
+
+  @@index([reservationId])
+  @@map("payments")
+}
+
+model PaymentRefund {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  paymentId String   @map("payment_id") @db.Uuid
+  amount    Decimal  @db.Decimal(12, 2)
+  reason    String
+  createdBy String   @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  creator Profile @relation(fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@map("payment_refunds")
+}
+
+// ─── AUDIT LOG ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  agencyId   String   @map("agency_id") @db.Uuid
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id") @db.Uuid
+  action     String
+  changes    Json     @default("{}")
+  createdBy  String   @map("created_by") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  agency  Agency  @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  creator Profile @relation(fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([agencyId, entityType, entityId])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_log")
+}
