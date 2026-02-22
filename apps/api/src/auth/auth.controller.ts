@@ -1,14 +1,14 @@
 import { Controller, Get, HttpCode, HttpStatus } from '@nestjs/common';
+import { Public } from '../common/decorators/public.decorator';
 
 /**
  * Health endpoint — public, no auth required.
- * We skip the global JwtAuthGuard by placing it outside the api/v1 prefix
- * via a separate registration in main.ts if needed, but for simplicity
- * we handle it here by bypassing via a public decorator.
+ * Marked with @Public() decorator to skip JWT authentication.
  */
 @Controller()
 export class AuthController {
   @Get('health')
+  @Public()
   @HttpCode(HttpStatus.OK)
   health() {
     return { data: { status: 'ok' } };

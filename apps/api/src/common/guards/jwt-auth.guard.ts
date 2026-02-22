@@ -5,10 +5,12 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Reflector } from '@nestjs/core';
 import { FastifyRequest } from 'fastify';
 import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../decorators/current-user.decorator';
+import { PUBLIC_KEY } from '../decorators/public.decorator';
 
 // Minimal JWT verification without external library — uses HS256 with the
 // Supabase JWT secret. For production, use @supabase/supabase-js verifyJwt
@@ -48,9 +50,20 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    // Check if route is marked as public
+    const isPublic = this.reflector.getAllAndOverride<boolean>(PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    if (isPublic) {
+      return true;
+    }
+
     const request = context.switchToHttp().getRequest<
       FastifyRequest & { user: AuthUser }
     >();

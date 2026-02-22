@@ -1,8 +1,8 @@
-import { Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { AgenciesService } from './agencies.service';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
-import { IsString, IsIn, IsOptional } from 'class-validator';
+import { IsString, IsIn, IsOptional, IsEmail } from 'class-validator';
 
 class UpdateUserRoleDto {
   @IsString()
@@ -13,6 +13,15 @@ class UpdateUserRoleDto {
   @IsString()
   @IsIn(['ACTIVE', 'INACTIVE'])
   status?: string;
+}
+
+class InviteUserDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @IsIn(['OWNER', 'STAFF', 'STAFF_PRICING', 'VIEWER'])
+  role!: string;
 }
 
 @Controller()
@@ -40,6 +49,22 @@ export class AgenciesController {
         role: u.role,
         status: u.status,
       })),
+    };
+  }
+
+  @Post('agencies/:agencyId/users/invite')
+  @Roles('OWNER')
+  async inviteUser(
+    @Param('agencyId') agencyId: string,
+    @Body() dto: InviteUserDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    if (user.agencyId !== agencyId) {
+      const { forbidden } = await import('../common/errors');
+      throw forbidden();
+    }
+    return {
+      data: await this.agencies.inviteUser(agencyId, dto.email, dto.role),
     };
   }
 
