@@ -1,6 +1,26 @@
 # 03_architecture_and_tech_stack.md
 Tour Reservations SaaS — Architecture & Technology Stack
 
+## Table of Contents
+1. [Architectural Goals](#1-architectural-goals)
+2. [Technology Stack](#2-technology-stack-final-decisions)
+3. [Authentication & Authorization](#3-authentication--authorization)
+4. [Multi-Tenancy Strategy](#4-multi-tenancy-strategy)
+5. [Backend Module Structure](#5-backend-module-structure-nestjs)
+6. [Transaction Strategy](#6-transaction-strategy)
+7. [Event-Ready Architecture](#7-event-ready-architecture-future-automation)
+8. [Pricing Engine](#8-pricing-engine-placement)
+9. [Capacity Engine](#9-capacity-engine-placement)
+10. [Logging & Audit](#10-logging--audit-strategy)
+11. [Error Handling](#11-error-handling-strategy)
+12. [Migration Strategy](#12-migration-strategy)
+13. [Environment Configuration](#13-environment-strategy)
+14. [Deployment Strategy](#14-deployment-strategy-initial)
+15. [Scaling Strategy](#15-scaling-strategy)
+16. [Migration Off Supabase](#16-migration-off-supabase-future-proofing)
+17. [Security Principles](#17-security-principles)
+18. [Summary](#18-summary)
+
 ---
 
 # 1. Architectural Goals
@@ -19,6 +39,57 @@ The architecture must:
    - API
    - UI
    - Future automation layer
+
+## System Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        CLIENT TIER                                   │
+│  ┌──────────────────────┐                                           │
+│  │   Next.js Frontend   │                                           │
+│  │  (Browser + Server)  │                                           │
+│  └──────────────────────┘                                           │
+└────────────────┬────────────────────────────────────────────────────┘
+                 │ HTTPS + JWT
+                 │
+┌────────────────┴────────────────────────────────────────────────────┐
+│                        API TIER                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │           NestJS Backend (Node.js LTS)                       │  │
+│  │  ┌────────────────────────────────────────────────────────┐  │  │
+│  │  │        NestJS Modules                                  │  │  │
+│  │  │  ┌──────────────────────────────────────────────────┐  │  │  │
+│  │  │  │ Auth | Agencies | Tours | Departures | Pricing   │  │  │  │
+│  │  │  │ Reservations | Payments | Capacity | Audit       │  │  │  │
+│  │  │  └──────────────────────────────────────────────────┘  │  │  │
+│  │  │                                                         │  │  │
+│  │  │  ┌──────────────────────────────────────────────────┐  │  │  │
+│  │  │  │ Core Services                                    │  │  │  │
+│  │  │  │ • Pricing Engine (deterministic calculations)   │  │  │  │
+│  │  │  │ • Capacity Engine (transactional validation)    │  │  │  │
+│  │  │  │ • Payment Service (accounting records)          │  │  │  │
+│  │  │  │ • Audit Logger (immutable business events)      │  │  │  │
+│  │  │  └──────────────────────────────────────────────────┘  │  │  │
+│  │  └────────────────────────────────────────────────────────┘  │  │
+│  │                        ↓ Prisma ORM                          │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└────────────────┬────────────────────────────────────────────────────┘
+                 │ JDBC / TCP Port 5432
+                 │
+┌────────────────┴────────────────────────────────────────────────────┐
+│                        DATA TIER                                     │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  Supabase (PostgreSQL + RLS + Auth)                         │  │
+│  │  ┌────────────────────────────────────────────────────────┐  │  │
+│  │  │  Agencies | Users | Tours | Items | Departures       │  │  │
+│  │  │  Reservations | Passengers | Pricing | Payments       │  │  │
+│  │  │  Audit Log | Category Rules                           │  │  │
+│  │  └────────────────────────────────────────────────────────┘  │  │
+│  │                                                              │  │
+│  │  RLS Policies: Tenant isolation per agency_id              │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -372,7 +443,186 @@ To migrate:
 
 ---
 
-# 18. Summary
+# 18. Testing Strategy
+
+## Unit Tests
+- Test pricing engine calculations in isolation
+- Test capacity engine logic independently
+- Test each service's business logic without DB
+
+## Integration Tests
+- Test module interactions (e.g., ReservationsService calling PricingEngine)
+- Test full reservation flow with transactional rollback
+- Test RBAC guards and authorization
+
+## E2E Tests
+- Test complete API workflows (create reservation → pay → verify audit)
+- Test multi-tenant isolation (ensure cross-tenant data leaks don't occur)
+- Test error scenarios (overbooking, pricing conflicts, etc.)
+
+## Testing Tools
+- Framework: Jest
+- Database: Isolated test DB or testcontainers
+- Mocking: jest.mock() for external services (Supabase, payments)
+
+> Always test the critical path: reservation creation, payment, and audit logging.
+
+---
+
+# 19. CI/CD Pipeline
+
+## GitHub Actions Workflow
+
+```yaml
+name: Build & Test
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v3
+      - run: pnpm install
+      - run: pnpm lint
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v3
+      - run: pnpm install
+      - run: pnpm typecheck
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v3
+      - run: pnpm install
+      - run: pnpm build
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v3
+      - run: pnpm install
+      - run: pnpm test --run
+```
+
+## Deployment
+- **Backend:** Automatic deploy to staging on merge to develop; manual approval to production.
+- **Frontend:** Automatic deploy to production on merge to main via Vercel.
+
+---
+
+# 20. Key Data Flows
+
+## Reservation Creation Flow
+
+```
+1. Frontend submits CreateReservationDto
+   ↓
+2. Backend validates DTO (pipes)
+   ↓
+3. Auth guard verifies JWT and extracts agency_id
+   ↓
+4. ReservationsService.create() starts transaction
+   ↓
+5. Capacity validation (SELECT ... FOR UPDATE on departure)
+   ↓
+6. PricingEngine resolves current prices
+   ↓
+7. Apply passenger categories and overrides
+   ↓
+8. Insert reservation + passengers + snapshot
+   ↓
+9. Emit domain event: reservation.created
+   ↓
+10. Return 201 + reservation details
+```
+
+## Payment Recording Flow
+
+```
+1. Webhook from payment provider → Backend payment controller
+   ↓
+2. Verify webhook signature
+   ↓
+3. PaymentsService.recordPayment() starts transaction
+   ↓
+4. Fetch reservation and verify amount
+   ↓
+5. Update reservation.payment_status
+   ↓
+6. Insert audit log entry
+   ↓
+7. Emit domain event: reservation.paid
+   ↓
+8. Return 200 OK
+   ↓
+9. Trigger notification automation (future: email/WhatsApp)
+```
+
+## Overbooking Prevention Flow
+
+```
+1. Reservation creation → CapacityEngine.validate()
+   ↓
+2. SELECT departure FOR UPDATE (locks row)
+   ↓
+3. Recalculate capacity_used from reservations
+   ↓
+4. If capacity_used + new_passengers > capacity → THROW conflict error
+   ↓
+5. Otherwise → transaction proceeds
+   ↓
+6. UNLOCK on transaction commit
+```
+
+---
+
+# 21. Module Dependency Graph
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                   AppModule (Entry Point)                        │
+└─────────────────────────────────────────────────────────────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        │                    │                    │
+        ↓                    ↓                    ↓
+   ┌─────────┐           ┌─────────┐        ┌──────────┐
+   │ AuthMod │           │PrismaServ│      │HelmMid   │
+   └─────────┘           └─────────┘        └──────────┘
+        │                     │
+        │         ┌───────────┼───────────────┐
+        │         │           │               │
+        ↓         ↓           ↓               ↓
+   ┌──────────────────────────────────────────────┐
+   │   ReservationsService (Core)                 │
+   │   - calls PricingEngine                      │
+   │   - calls CapacityEngine                     │
+   │   - calls AuditService                       │
+   └──────────────────────────────────────────────┘
+        │      │           │
+        │      │           └──→ PricingService
+        │      └──────────────→ DeparturesService
+        │                       TourItemsService
+        │
+        └──────────────────────→ PaymentsService
+                                AuditService
+```
+
+---
+
+# 22. Summary
 
 | Layer        | Technology |
 |--------------|------------|
@@ -385,10 +635,16 @@ To migrate:
 | Pricing      | Versioned + non-overlapping ranges |
 | Capacity     | Derived + transactional validation |
 | Accounting   | Manual payment/refund consistency |
+| Testing      | Jest + E2E integration tests |
+| CI/CD        | GitHub Actions |
+| Deployment   | Vercel (Frontend), Railway/Render (Backend), Supabase (DB) |
 
 This architecture supports:
 - Immediate MVP launch
-- Multi-agency SaaS
-- Automation expansion
-- Horizontal scaling
-- Migration flexibility
+- Multi-agency SaaS with strict tenant isolation
+- Deterministic pricing calculations
+- Transactional capacity validation (no overbooking)
+- Complete audit trails for compliance
+- Automation expansion (event-driven foundation)
+- Horizontal scaling via caching and queues
+- Migration flexibility (away from Supabase without code changes)
