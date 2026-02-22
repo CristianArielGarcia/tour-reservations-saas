@@ -1,0 +1,166 @@
+flowchart TD
+  A[Open Departures Calendar] --> B[Select Departure]
+  B --> C[New Reservation]
+  C --> D[Select Currency USD/ARS]
+  D --> E[Enter Customer Info]
+  E --> F[Add Passengers + Categories]
+  F --> G[Select Optional Addons]
+  G --> H[Compute snapshot items + totals]
+  H --> I{Capacity ok?}
+  I -->|Yes| J[Save Reservation as RESERVED]
+  I -->|No| K{Has OVERBOOK permission?}
+  K -->|No| L[Reject (409 capacity conflict)]
+  K -->|Yes| M[Require overbook reason]
+  M --> J
+
+
+flowchart TD
+  A[Open Reservations] --> B[New Reservation]
+  B --> C[Select Tour]
+  C --> D[Select Departure]
+  D --> E[Select Currency]
+  E --> F[Customer + Passengers]
+  F --> G[Addons]
+  G --> H[Compute snapshot]
+  H --> I{Capacity ok?}
+  I -->|Yes| J[Save RESERVED]
+  I -->|No| K[Overbook path or reject]
+
+
+flowchart TD
+  A[Departure] --> B[Reservations for departure]
+  B --> C[Filter statuses: RESERVED/PARTIALLY_PAID/PAID/CONFIRMED]
+  C --> D[Join passengers]
+  D --> E[Join passenger category (occupies_capacity)]
+  E --> F[Count passengers where occupies_capacity = true]
+  F --> G[capacity_used]
+  G --> H[capacity_remaining = capacity_total - capacity_used]
+
+flowchart TD
+  A[Operation that affects capacity] --> B[Compute capacity_used]
+  B --> C[Compute new_required_capacity]
+  C --> D{capacity_used + new_required_capacity <= capacity_total?}
+  D -->|Yes| E[Proceed]
+  D -->|No| F{User has OVERBOOK permission?}
+  F -->|No| G[Fail: 409 conflict]
+  F -->|Yes| H[Require reason + audit]
+  H --> I[Proceed + mark reservation override]
+  I --> J[Departure becomes OVERBOOKED flag if used > total]
+
+flowchart TD
+  A[Reservation create/update] --> B[Get departure date]
+  B --> C[Choose currency -> price book]
+  C --> D[Load tour items for tour]
+  D --> E[For each item: find valid price by date]
+  E --> F[Apply passenger pricing rules]
+  F --> G[Generate reservation_items snapshot]
+  G --> H[total_snapshot = sum(item totals)]
+  H --> I[total_final = total_snapshot + adjustments]
+
+
+flowchart TD
+  A[Tour item] --> B{kind == BASE?}
+  B -->|Yes| C[Apply category.base_multiplier per passenger]
+  B -->|No| D{kind == FEE or ADDON}
+  D --> E[Ignore base multiplier]
+  E --> F{Has item-category override multiplier?}
+  F -->|Yes| G[Apply override multiplier per passenger/category]
+  F -->|No| H[Multiplier = 1.0]
+  C --> I[Compute totals]
+  G --> I
+  H --> I
+  I --> J[Store snapshot lines]
+
+flowchart TD
+  A[Reservation edit] --> B{Structural change?}
+  B -->|No| C[Keep snapshot]
+  B -->|Yes| D[Delete reservation_items]
+  D --> E[Delete adjustments]
+  E --> F[Recompute items from catalog]
+  F --> G[Update totals]
+  G --> H[Audit: reservation_recalculated]
+
+
+Structural changes include:
+
+- change departure_id
+
+- change departure date (day)
+
+- change currency
+
+- change passengers list/categories
+
+- change addons selection/quantity
+
+
+
+flowchart TD
+  A[Edit Departure] --> B{Change is time-only?}
+  B -->|Yes| C[Apply change + audit]
+  B -->|No| D{Date changed?}
+  D -->|Yes| E[Apply change + audit]
+  E --> F[Trigger repricing for affected reservations]
+  F --> G[Remove adjustments + rebuild snapshots]
+
+
+flowchart TD
+  A[Edit capacity_total] --> B[Compute capacity_used]
+  B --> C{new_capacity_total >= capacity_used?}
+  C -->|Yes| D[Apply + audit]
+  C -->|No| E{Privileged role?}
+  E -->|No| F[Reject change]
+  E -->|Yes| G[Require reason + audit]
+  G --> H[Apply change + mark departure OVERBOOKED]
+
+flowchart TD
+  A[Record Payment] --> B[Recompute total_paid]
+  B --> C[Recompute total_refunded]
+  C --> D[net_paid = total_paid - total_refunded]
+  D --> E[balance_due = total_final - net_paid]
+  E --> F{net_paid >= total_final?}
+  F -->|Yes| G[Set status PAID]
+  F -->|No| H{net_paid > 0?}
+  H -->|Yes| I[Set status PARTIALLY_PAID]
+  H -->|No| J[Set status RESERVED]
+
+
+flowchart TD
+  A[Request cancel] --> B{Reservation status == PAID/CONFIRMED?}
+  B -->|No| C[STAFF+ can cancel with reason]
+  B -->|Yes| D{Role == OWNER?}
+  D -->|No| E[Reject: forbidden]
+  D -->|Yes| F[Require reason + audit]
+  F --> G[Set status CANCELLED]
+  G --> H[Capacity released]
+
+flowchart TD
+  A[Request reopen] --> B{Role == OWNER?}
+  B -->|No| C[Reject]
+  B -->|Yes| D[Compute capacity]
+  D --> E{Capacity ok?}
+  E -->|Yes| F[Set status RESERVED + audit]
+  E -->|No| G{Has OVERBOOK permission?}
+  G -->|No| H[Reject]
+  G -->|Yes| I[Require reason + audit]
+  I --> F
+
+flowchart TD
+  A[Action requested] --> B{User authenticated?}
+  B -->|No| C[401 Unauthorized]
+  B -->|Yes| D{User belongs to agency?}
+  D -->|No| E[403 Forbidden]
+  D -->|Yes| F{Role has permission?}
+  F -->|No| G[403 Forbidden]
+  F -->|Yes| H[Proceed]
+
+flowchart TD
+  A[Need to change price] --> B{Is it a catalog price update?}
+  B -->|Yes| C[Create new validity price (do not touch existing reservations)]
+  B -->|No| D{Is it a reservation exception?}
+  D -->|Yes| E[Create adjustment with reason + audit]
+  E --> F[Recompute total_final]
+  D -->|No| G[No action]
+
+
+
