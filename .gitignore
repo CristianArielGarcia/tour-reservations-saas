@@ -8,6 +8,10 @@ dist/
 */dist/
 build/
 */build/
+.next/
+*/.next/
+out/
+*/out/
 
 # IDE
 .vscode/
