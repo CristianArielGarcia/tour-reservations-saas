@@ -57,10 +57,10 @@ export const refundExceedsPayment = () =>
     'Total refunded amount would exceed the payment amount.',
   );
 
-// 422 — missing price
+// 409 — missing price
 export const missingPrice = (itemCode: string) =>
   new ApiException(
-    HttpStatus.UNPROCESSABLE_ENTITY,
+    HttpStatus.CONFLICT,
     'missing_price',
     `No active price found for tour item '${itemCode}' on the departure date in the selected currency.`,
   );
@@ -84,3 +84,23 @@ export const invalidTotal = () =>
 // 400 — generic validation
 export const validationError = (message: string) =>
   new ApiException(HttpStatus.BAD_REQUEST, 'validation_error', message);
+
+// 401 — unauthenticated
+export const unauthenticated = () =>
+  new ApiException(HttpStatus.UNAUTHORIZED, 'unauthenticated', 'Authentication required.');
+
+// 422 — inactive category
+export const inactiveCategory = (categoryCode: string) =>
+  new ApiException(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    'inactive_category',
+    `Passenger category '${categoryCode}' is inactive and cannot be used.`,
+  );
+
+// 422 — too many reservations to reprice
+export const tooManyReservationsToReprice = (count: number, threshold: number) =>
+  new ApiException(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    'too_many_reservations_to_reprice',
+    `Cannot reprice ${count} reservations in a single operation (limit: ${threshold}). Please use the batch reprice endpoint.`,
+  );

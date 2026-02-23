@@ -12,6 +12,7 @@ import {
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { hasMinRole } from '../common/decorators/roles.decorator';
 import { isSameDay } from '../common/date-utils';
+import { tooManyReservationsToReprice } from '../common/errors';
 
 @Injectable()
 export class DeparturesService {
@@ -153,6 +154,12 @@ export class DeparturesService {
           },
           select: { id: true },
         });
+
+        // Guard: reject if too many reservations to reprice synchronously (MVP guard)
+        const REPRICE_THRESHOLD = 100;
+        if (reservations.length > REPRICE_THRESHOLD) {
+          throw tooManyReservationsToReprice(reservations.length, REPRICE_THRESHOLD);
+        }
 
         // Wipe items + adjustments for each reservation — repricing will be
         // done by the reservations service on next load / explicit recalculate.
