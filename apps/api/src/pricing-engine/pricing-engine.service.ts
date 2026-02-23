@@ -300,8 +300,14 @@ export class PricingEngineService {
   }
 
   /**
-   * Derive the reservation status based on accounting (does not modify CONFIRMED → PAID).
-   * Returns the derived status; caller decides whether to apply it.
+   * Derive the reservation status based on accounting.
+   * Per §6.5 of 06_business_rules_engine.md:
+   * - If CANCELLED, keep CANCELLED
+   * - If net_paid >= total_final:
+   *   - If already CONFIRMED, keep CONFIRMED
+   *   - Else set PAID
+   * - Else if net_paid > 0: set PARTIALLY_PAID
+   * - Else: set RESERVED
    */
   deriveStatus(
     currentStatus: string,
@@ -310,7 +316,12 @@ export class PricingEngineService {
   ): string {
     if (currentStatus === 'CANCELLED') return 'CANCELLED';
 
-    if (netPaid.gte(totalFinal) && totalFinal.gt(0)) return 'PAID';
+    if (netPaid.gte(totalFinal) && totalFinal.gt(0)) {
+      // Preserve CONFIRMED status if already confirmed
+      if (currentStatus === 'CONFIRMED') return 'CONFIRMED';
+      return 'PAID';
+    }
+
     if (netPaid.gt(0)) return 'PARTIALLY_PAID';
     return 'RESERVED';
   }

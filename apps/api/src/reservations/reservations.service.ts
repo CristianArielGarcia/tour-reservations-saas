@@ -21,6 +21,7 @@ import {
   CreateAdjustmentDto,
 } from './reservations.dto';
 import { isSameDay } from '../common/date-utils';
+import { inactiveCategory } from '../common/errors';
 
 // Valid status transitions matrix
 const TRANSITIONS: Record<string, ReservationStatus[]> = {
@@ -114,12 +115,13 @@ export class ReservationsService {
       }
     }
 
-    // Validate category codes exist for agency
+    // Validate category codes exist and are active for agency
     for (const p of dto.passengers) {
       const cat = await this.prisma.passengerCategory.findFirst({
-        where: { agencyId, code: p.category_code, active: true },
+        where: { agencyId, code: p.category_code },
       });
       if (!cat) throw notFound('PassengerCategory', p.category_code);
+      if (!cat.active) throw inactiveCategory(p.category_code);
     }
 
     // Validate unique document_ids within the request
@@ -397,12 +399,13 @@ export class ReservationsService {
     let snapshot: Awaited<ReturnType<PricingEngineService['buildSnapshot']>> | null = null;
 
     if (needsRecalculation) {
-      // Validate categories
+      // Validate categories exist and are active
       for (const p of passengers) {
         const cat = await this.prisma.passengerCategory.findFirst({
-          where: { agencyId, code: p.category_code, active: true },
+          where: { agencyId, code: p.category_code },
         });
         if (!cat) throw notFound('PassengerCategory', p.category_code);
+        if (!cat.active) throw inactiveCategory(p.category_code);
       }
 
       // Build new snapshot
